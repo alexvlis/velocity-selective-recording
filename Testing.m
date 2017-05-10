@@ -6,6 +6,7 @@
 Fs = 100000;    % Sampling frequency
 d = 0.003;      % Electrode spacing
 maxsamples = 15;
+v = zeros(maxsamples);
 
 for samples = 1:maxsamples
     v(samples) = d/(samples/Fs);
@@ -31,12 +32,22 @@ Parameters = struct (                 ...
    'StepTestVelocity',         1    , ...
    'EndTestVelocity',        120    , ...
    'MatchRepeats',            10    , ...
-   'NoiseLevel',               0    );
+   'NoiseLevel',               0    , ...
+   'APType',                'UniPolar');
 
 % Time sequence length for each AP
 InitTime = 0.001;
 EndTime = 0.004;
 Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
+
+% Sensor type
+if Parameters.APType == 'UniPolar'
+    GetData = @GetUniPolar;
+    DataLines = Parameters.Electrodes;
+elseif Parameters.APType == 'TriPolar'
+    GetData = @GetTriPolar;
+    DataLines = Parameters.Electrodes - 2;
+end
 
 % AP velocity
 ActionPotentialVelocity = 20;
@@ -73,15 +84,15 @@ Velocities = Parameters.StartTestVelocity:...
              Parameters.StepTestVelocity:...
              Parameters.EndTestVelocity;
 NumVelocities = numel(Velocities);
-TripolarData = zeros(NumVelocities , Parameters.Electrodes - 2 , numel(Time));
+Data = zeros(NumVelocities , DataLines , numel(Time));
 
 for VelocityIndex = 1:NumVelocities
     Velocity = Velocities(VelocityIndex);
-    TripolarData(VelocityIndex,:,:) = GetTriPolar(Parameters, Velocity, Time);
+    Data(VelocityIndex,:,:) = GetData(Parameters, Velocity, Time);
 end
 
-TripolarNorm = AgcSim(TripolarData);
-FinalChannel = TripolarNorm(:,Parameters.Electrodes - 2,:);
+TripolarNorm = AgcSim(Data);
+FinalChannel = TripolarNorm(:, DataLines,:);
 TargetPulse = zeros(size(FinalChannel));
 for i = 1:NumVelocities
     TargetPulse(i,1,(FinalChannel(i,1,:) >= (max(FinalChannel(i,1,:)/sqrt(2))))) = 1;
@@ -131,7 +142,7 @@ Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
 TimeLength = numel(Time);
 
 % Set up an array for the input tripoles so that we can do an overall AGC
-TripolarData = zeros(NumVelocities, Parameters.Electrodes - 2, TimeLength);
+Data = zeros(NumVelocities, DataLines, TimeLength);
            
 % Run a test at each of the selected velocities
 for VelocityIndex = 1:NumVelocities     
@@ -140,11 +151,11 @@ for VelocityIndex = 1:NumVelocities
     Velocity = Velocities(VelocityIndex);
     
     % Get a data set of the approriate velocity
-    TripolarData(VelocityIndex,:,:) = GetTriPolar(Parameters, Velocity, Time);
+    Data(VelocityIndex,:,:) = GetData(Parameters, Velocity, Time);
 end
 
 % Apply the AGC
-TripolarNorm = AgcSim(TripolarData);
+TripolarNorm = AgcSim(Data);
 
 % Apply each delay-sum system to an AP at each test velocity
 % and find the peak response.
@@ -160,9 +171,9 @@ for MatchedVelInd=1:NumMatchedVelocities
     for VelocityIndex = 1:NumVelocities
         
         % Delay and sum
-        DelaySumOutput(VelocityIndex,1,:) = TripolarNorm(VelocityIndex,Parameters.Electrodes-2,:);
-        for n = 1:Parameters.Electrodes-3
-            Delay = round((Parameters.Electrodes-2-n)*...
+        DelaySumOutput(VelocityIndex,1,:) = TripolarNorm(VelocityIndex,DataLines,:);
+        for n = 1:DataLines-1
+            Delay = round((DataLines-n)*...
                           InterElectrodeDelay*...
                           Parameters.SamplingFrequency);
             DelayedSignal = circshift(TripolarNorm(VelocityIndex,n,:), Delay, 3);
@@ -211,13 +222,13 @@ legend('show');
 
 % % Delay and sum with BPF inputs
 % Bpf = fir2(120,[0 0.5 0.5 0.55 0.55 1],[0 0 1 1 0 0]);
-% for n = 1:Parameters.Electrodes-2
+% for n = 1:DataLines
 %     Outbpf(n,:) = filter(Bpf,1,TripolarNorm(n,:));
 % end
 % DelaySumOutput = Outbpf(9,:);
 % InterElectrodeDelay = Parameters.ElectrodeSpacing/MatchedVelocity;
 % for n = 1:Parameters.Electrodes-3
-%     Delay = round((Parameters.Electrodes-2-n)*...
+%     Delay = round((DataLines-n)*...
 %                   InterElectrodeDelay*...
 %                   Parameters.SamplingFrequency);
 %     DelayedSignal = circshift(Outbpf(n,1:end), Delay, 2);
@@ -244,7 +255,8 @@ Parameters = struct (                 ...
    'StepTestVelocity',        20    , ...
    'EndTestVelocity',        100    , ...
    'MatchRepeats',             1    , ...
-   'NoiseLevel',           2e-21    );
+   'NoiseLevel',           2e-21    , ...
+   'APType',              'UniPolar');
 
 MatchedVelocity = 20;
 
@@ -263,7 +275,7 @@ SequenceTime = (0:(TimeLength * NumVelocities) - 1) ...
                / Parameters.SamplingFrequency;
 
 % Set up the arrays to hold the input and output data
-TripolarInputSequence = zeros(Parameters.Electrodes - 2, ...
+TripolarInputSequence = zeros(DataLines, ...
                               NumVelocities * TimeLength);
 TargetSequence = zeros(1,NumVelocities*TimeLength);
 
@@ -275,12 +287,12 @@ for VelocityIndex = 1:NumVelocities
     Velocity = Velocities(VelocityIndex);
     
     % Get a data set of the approriate velocity
-    TripolarData = GetTriPolar(Parameters, Velocity, Time);
+    Data = GetData(Parameters, Velocity, Time);
     
     % Insert the data into the input sequence
     InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
     InsertEnd = InsertStart + TimeLength - 1;
-    TripolarInputSequence (:,InsertStart:InsertEnd) = TripolarData;
+    TripolarInputSequence (:,InsertStart:InsertEnd) = Data;
 end
 
 % Normalise the data into the range 1 to -1 for each channel separately
@@ -299,10 +311,10 @@ for VelocityIndex = VelocityIndices(Velocities == MatchedVelocity)
     % Get a data set of the approriate velocity with no noise
     NoiseLessParameters = Parameters;
     NoiseLessParameters.NoiseLevel = 0;
-    TripolarData = GetTriPolar(NoiseLessParameters, MatchedVelocity, Time);
+    Data = GetData(NoiseLessParameters, MatchedVelocity, Time);
     
     % Get the final channel
-    FinalChannel = TripolarData(Parameters.Electrodes - 2,:);
+    FinalChannel = Data(DataLines,:);
     
     % Normalise it
     FinalChannel = AgcSim(FinalChannel);
@@ -332,11 +344,11 @@ xlabel('Time (s)');
 Parameters.StartTestVelocity = 10;
 Parameters.StepTestVelocity = 10;
 Parameters.EndTestVelocity = 120;
-figure;
 
-ANN(:).net.outputConnect = [1 0];
-ANN(:).net.layers{1}.transferFcn = 'purelin';
+figure;
 for ANNindex = 1:3
+    ANN(ANNindex).net.outputConnect = [1 0];
+    ANN(ANNindex).net.layers{1}.transferFcn = 'purelin';
     % Set the initial velocity set including the repeated matched set
     Velocities = Parameters.StartTestVelocity:...
                  Parameters.StepTestVelocity:...
@@ -358,12 +370,12 @@ for ANNindex = 1:3
         Velocity = Velocities(VelocityIndex);
         
         % Get a data set of the approriate velocity
-        TripolarData = GetTriPolar(Parameters, Velocity, Time);
+        Data = GetData(Parameters, Velocity, Time);
         
         % Insert the data into the input sequence
         InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
         InsertEnd = InsertStart + TimeLength - 1;
-        TripolarInputSequence (:,InsertStart:InsertEnd) = TripolarData;
+        TripolarInputSequence (:,InsertStart:InsertEnd) = Data;
     end
     
     % Apply the AGC
@@ -400,14 +412,14 @@ Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
 
 Velocities = [20, 50, 90];
 NumVelocities = numel(Velocities);
-TripolarData = zeros(NumVelocities , Parameters.Electrodes - 2 , numel(Time));
+Data = zeros(NumVelocities , DataLines , numel(Time));
 
 for VelocityIndex = 1:NumVelocities
     Velocity = Velocities(VelocityIndex);
-    TripolarData(VelocityIndex,:,:) = GetTriPolar(Parameters, Velocity, Time);
+    Data(VelocityIndex,:,:) = GetData(Parameters, Velocity, Time);
 end
 
-TripolarNorm = AgcSim(TripolarData);
+TripolarNorm = AgcSim(Data);
 
 figure;
 for n = 1:NumVelocities
@@ -422,7 +434,7 @@ for n = 1:NumVelocities
     %figure;
     subplot(1,2,1);
     plot(Time, Signal);
-    title('Tripolar AP time signal');
+    title(strcat(Parameters.APType, ' AP time signal'));
     xlabel('Time (s)');
     ylabel('Amplitude');
     hold on;
@@ -438,17 +450,15 @@ legend(labels);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Plot weights and compute frequency responses
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-ANNindex = 1;
+ANNindex = 3;
 
 % Get weights
-% InputWeights = zeros(Parameters.Electrodes-2,Parameters.AnnLength(1));
-InputWeights = zeros(Parameters.Electrodes-2, 120);
-
-for Channel = 1:(Parameters.Electrodes-2)
+InputWeights = zeros(DataLines,120);
+for Channel = 1:(DataLines)
     i = 0;
     for n = Channel:...
-            (Parameters.Electrodes-2):...
-            (numel(ANN(ANNindex).net.IW{1}) - (Parameters.Electrodes-2) + Channel)
+            (DataLines):...
+            (numel(ANN(ANNindex).net.IW{1}) - (DataLines) + Channel)
         i = i + 1;
         InputWeights(Channel,i) = ANN(ANNindex).net.IW{1}(n);
     end
@@ -456,15 +466,16 @@ end
 
 % Frequency magnitude and phase response
 figure;
-for n = 1:(Parameters.Electrodes-2)
-    subplot(3,3,n);
+for n = 1:(DataLines)
+    subplot(4,3,n);
     [h, f] = freqz(InputWeights(n,:),...
                    [1 zeros(1,120 - 1)],...
                    512,Parameters.SamplingFrequency);
     hAx = plotyy(f/1000,20*log10(abs(h)),f/1000,unwrap(angle(h)));
     ylabel(hAx(1),'Magnitude (dB)');
     ylabel(hAx(2),'Phase (rad)');
-    ylim(hAx(2),[-100 0]);
+    %ylim(hAx(2),[-100 0]);
+    ylim(hAx(1), [-60 60]);
     hAx(2).YTick = [-100 -75 -50 -25 0];
     xlim([0 0.5*Parameters.SamplingFrequency/1000]);
     xlabel('Frequency (kHz)');
@@ -473,7 +484,8 @@ end
 
 % Phase delay
 figure;
-for n = 1:(Parameters.Electrodes-2)
+meanphi = zeros(size(DataLines));
+for n = 1:DataLines
     [phi, w] = phasedelay(InputWeights(n,:),...
                          [1 zeros(1,120 - 1)],...
                          512);
@@ -488,21 +500,21 @@ end
 legend(labels);
 
 % Plot average filter delay (phase delay) in each channel
-% figure;
-% plot(1:Parameters.Electrodes-2, meanphi, 'b*');
-% h_phase = lsline;   % Least-squares line
-% ChannelDelay = abs((h_phase.YData(1)-h_phase.YData(2))/...
-%                (h_phase.XData(1)-h_phase.XData(2)));
-% text(2, h_phase.YData(2)+3, ['Average inter-channel delay = ' num2str(ChannelDelay) ' samples']);
-% xlim([1, Parameters.Electrodes-2]);
-% xlabel('Channel');
-% ylabel('Average phase delay (samples)');
+figure;
+plot(1:DataLines, meanphi, 'b*');
+h_phase = lsline;   % Least-squares line
+ChannelDelay = abs((h_phase.YData(1)-h_phase.YData(2))/...
+               (h_phase.XData(1)-h_phase.XData(2)));
+text(2, h_phase.YData(2)+3, ['Average inter-channel delay = ' num2str(ChannelDelay) ' samples']);
+xlim([1, DataLines]);
+xlabel('Channel');
+ylabel('Average phase delay (samples)');
 
 % % Group delay
 % figure;
-% for n = 1:(Parameters.Electrodes-2)
+% for n = 1:(DataLines)
 %     [gd, f] = grpdelay(InputWeights(n,:),...
-%                          [1 zeros(1,Parameters.AnnLength(1) - 1)],...
+%                          [1 zeros(1,120 - 1)],...
 %                          512,Parameters.SamplingFrequency);
 %     meangd(n) = mean(gd);
 %     plot(f/1000,gd);
@@ -516,20 +528,20 @@ legend(labels);
 % 
 % % Plot average filter delay (group delay) in each channel
 % figure;
-% plot(1:Parameters.Electrodes-2, meangd, 'b*');
+% plot(1:DataLines, meangd, 'b*');
 % h_group = lsline;
 % ChannelDelay = abs((h_group.YData(1)-h_group.YData(2))/...
 %                (h_group.XData(1)-h_group.XData(2)));
 % text(2, h_group.YData(2)+3, ['Average inter-channel delay = ' num2str(ChannelDelay) ' samples']);
-% xlim([1, Parameters.Electrodes-2]);
+% xlim([1, DataLines]);
 % xlabel('Channel');
 % ylabel('Average group delay (samples)');
 
 % Plot weights
 figure;
 MaxWeight = max(max(abs(InputWeights)));
-for n = 1:(Parameters.Electrodes-2)
-    subplot(Parameters.Electrodes-2,1,n)
+for n = 1:(DataLines)
+    subplot(DataLines,1,n)
     plot((0:120-1),...
          InputWeights(n,:));
     grid on;
@@ -539,8 +551,8 @@ xlabel('Delayed samples (z^{-1})');
 
 % % Plot FFT of weights
 % figure;
-% for n = 1:(Parameters.Electrodes-2)
-%     subplot(Parameters.Electrodes-2,1,n)
+% for n = 1:(DataLines)
+%     subplot(DataLines,1,n)
 %     Signal = InputWeights(n,:);
 %     L = 2*floor(numel(Signal)/2);
 %     Y = fft(Signal);
@@ -553,15 +565,15 @@ xlabel('Delayed samples (z^{-1})');
 %     MaxValue(n) = max(P1);
 % end
 % xlabel('Frequency (kHz)')
-% for n = 1:(Parameters.Electrodes-2)
-%     subplot(Parameters.Electrodes-2,1,n)
+% for n = 1:(DataLines)
+%     subplot(DataLines,1,n)
 %     ylim([0 max(MaxValue)]);
 % end
 
 % % Plot phase response of filters
 % figure;
-% for n = 1:(Parameters.Electrodes-2)
-%     subplot(Parameters.Electrodes-2,1,n)
+% for n = 1:(DataLines)
+%     subplot(DataLines,1,n)
 %     Signal = InputWeights(n,:);
 %     L = 2*floor(numel(Signal)/2);
 %     Y = fft(Signal);
@@ -573,6 +585,7 @@ xlabel('Delayed samples (z^{-1})');
 %     ylim([-pi pi]);
 % end
 % xlabel('Frequency (kHz)');
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Investigate ANN outputs at each FIR filter system
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -581,7 +594,7 @@ ANNindex = 1;
 testnet = ANN(ANNindex).net;                % copy neural network
 testnet.outputConnect = [1 0];              % connect output to first layer
 testnet.biasConnect = [0; 0];
-testnet.layers{1}.transferFcn = 'purelin';  % 'purelin' for pre-sum
+%testnet.layers{1}.transferFcn = 'purelin';  % 'purelin' for pre-sum
 
 % Set the initial velocity set
 Velocities = 10:10:120;
@@ -602,21 +615,21 @@ for VelocityIndex = 1:NumVelocities
     Velocity = Velocities(VelocityIndex);
     
     % Get a data set of the approriate velocity
-    TripolarData = GetTriPolar(Parameters, Velocity, Time);
+    Data = GetData(Parameters, Velocity, Time);
     
     % Insert the data into the input sequence
     InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
     InsertEnd = InsertStart + TimeLength - 1;
-    TripolarInputSequence (:,InsertStart:InsertEnd) = TripolarData;
+    TripolarInputSequence (:,InsertStart:InsertEnd) = Data;
 end
 
 figure;
-
-for ChannelIndex = 1:Parameters.Electrodes-2
+for ChannelIndex = 1:DataLines
     % Apply the AGC
     TripolarNorm = AgcSim(TripolarInputSequence);
     
-    for i = 1:Parameters.Electrodes-2
+    % Set every other channel to zero
+    for i = 1:DataLines
         if i == ChannelIndex
             continue;
         end
@@ -625,64 +638,37 @@ for ChannelIndex = 1:Parameters.Electrodes-2
     
     % Convert data format to be input to the ANN from a R-by-TS matrix
     % to a 1-by-TS cell array of R-by-1 vectors
-    TripolarCellArray = con2seq(TripolarNorm(1:Parameters.Electrodes-2,:));
+    TripolarCellArray = con2seq(TripolarNorm(1:DataLines,:));
     
     % Run the ANN
     AnnOutputCellArray = sim(testnet,TripolarCellArray);
     
     % Convert ANN output back to a conventional array
     AnnOutput(ChannelIndex,:) = cell2mat(AnnOutputCellArray);
-    
-    subplot(Parameters.Electrodes-2,1,ChannelIndex);
+    title('FIR filter time response');
+    subplot(DataLines,1,ChannelIndex);
     plot(SequenceTime, AnnOutput(ChannelIndex,:));
 end
-
 xlabel('Time (s)')
 
 MaxValue = max(max(abs(AnnOutput)));
-for n = 1:(Parameters.Electrodes-2)
-    subplot(Parameters.Electrodes-2,1,n)
+for n = 1:(DataLines)
+    subplot(DataLines,1,n)
     ylim([-MaxValue MaxValue]);
 end
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Investigate ANN outputs of first layer after summation
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 ANNindex = 1;
-ChannelIndex = 1:Parameters.Electrodes-2;
+ChannelIndex = 1:DataLines;
 
 testnet = ANN(ANNindex).net;                % copy neural network
 testnet.outputConnect = [1 0];              % connect output to first layer
 testnet.biasConnect = [1; 1];
-testnet.layers{1}.transferFcn = 'purelin';  % 'purelin' for pre-'tansig'
+%testnet.layers{1}.transferFcn = 'purelin';  % 'purelin' for pre-'tansig'
 
-% Set the initial velocity set
-Velocities = Parameters.StartTestVelocity:...
-             Parameters.StepTestVelocity:...
-             Parameters.EndTestVelocity;
-NumVelocities = numel(Velocities);
-
-% Set up the time sequence for the signals at each velocity
-InitTime = 0.001;
-EndTime = 0.004;
-Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
-TimeLength = numel(Time);
-SequenceTime = (0:(TimeLength * NumVelocities) - 1) ...
-               / Parameters.SamplingFrequency;
-
-% Run a test at each of the selected velocities
-for VelocityIndex = 1:NumVelocities     
-    
-    % Retrieve the selected velocity
-    Velocity = Velocities(VelocityIndex);
-    
-    % Get a data set of the approriate velocity
-    TripolarData = GetTriPolar(Parameters, Velocity, Time);
-    
-    % Insert the data into the input sequence
-    InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
-    InsertEnd = InsertStart + TimeLength - 1;
-    TripolarInputSequence (:,InsertStart:InsertEnd) = TripolarData;
-end
+[TripolarInputSequence, Sequence] = signal_generator(Parameters, GetData);
 
 % Apply the AGC
 TripolarNorm = AgcSim(TripolarInputSequence);
@@ -699,8 +685,8 @@ AnnOutput = cell2mat(AnnOutputCellArray);
 
 figure;
 subplot(2,1,1);
-plot(SequenceTime, TripolarNorm(9,:));
-subplot(2,1,2)
+plot(SequenceTime, TripolarNorm(DataLines,:));
+subplot(2,1,2);
 plot(SequenceTime, AnnOutput);
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Align filter weights
@@ -709,12 +695,12 @@ for ANNindex = 1:3
     MatchedVelocity = AnnVelocities(ANNindex);
     
     % Get weights
-    InputWeights = zeros(Parameters.Electrodes-2,120);
-    for Channel = 1:(Parameters.Electrodes-2)
+    InputWeights = zeros(DataLines,120);
+    for Channel = 1:(DataLines)
         i = 0;
         for n = Channel:...
-                (Parameters.Electrodes-2):...
-                (numel(ANN(ANNindex).net.IW{1}) - (Parameters.Electrodes-2) + Channel)
+                (DataLines):...
+                (numel(ANN(ANNindex).net.IW{1}) - (DataLines) + Channel)
             i = i + 1;
             InputWeights(Channel,i) = ANN(ANNindex).net.IW{1}(n);
         end
@@ -727,11 +713,11 @@ for ANNindex = 1:3
     InterElectrodeDelay = Parameters.ElectrodeSpacing*...
                           Parameters.SamplingFrequency/...
                           MatchedVelocity;
-    for n = 1:Parameters.Electrodes-2
+    for n = 1:DataLines
         Delay = round((n-5)*InterElectrodeDelay);
         DelayedWeights = circshift(InputWeights(n,1:end), Delay, 2);
         DelaySumWeights = DelaySumWeights + DelayedWeights;
-        subplot(Parameters.Electrodes-2,1,n);
+        subplot(DataLines,1,n);
         plot((0:120-1), DelayedWeights);
         ylim([-MaxWeight MaxWeight]);
         grid on;
@@ -741,7 +727,7 @@ for ANNindex = 1:3
 %     % Plot summed weights
 %     figure;
 %     MaxWeight = max(max(abs(DelaySumWeights)));
-%     plot((0:Parameters.AnnLength(1)-1), DelaySumWeights);
+%     plot((0:120-1), DelaySumWeights);
 %     grid on;
 %     ylim([-MaxWeight MaxWeight]);
 %     xlabel('Delayed samples (z^{-1})');
@@ -749,7 +735,7 @@ for ANNindex = 1:3
 %     % Frequency magnitude and phase response
 %     figure;
 %     [h, f] = freqz(DelaySumOutput,...
-%         [1 zeros(1,Parameters.AnnLength(1) - 1)],...
+%         [1 zeros(1,120 - 1)],...
 %         500,Parameters.SamplingFrequency);
 %     hAx = plotyy(f/1000,20*log10(abs(h)),f/1000,unwrap(angle(h)));
 %     ylabel(hAx(1),'Magnitude (dB)');
@@ -801,10 +787,10 @@ for ANNindex = 1:3
 %     TripolarNorm = AgcSim(TripolarInputSequence);
 %     
 %     % Delay and sum
-%     DelaySumOutput = TripolarNorm(Parameters.Electrodes-2,:);
+%     DelaySumOutput = TripolarNorm(DataLines,:);
 %     InterElectrodeDelay = Parameters.ElectrodeSpacing/MatchedVelocity;
 %     for n = 1:Parameters.Electrodes-3
-%         Delay = round((Parameters.Electrodes-2-n)*...
+%         Delay = round((DataLines-n)*...
 %                       InterElectrodeDelay*...
 %                       Parameters.SamplingFrequency);
 %         DelayedSignal = circshift(TripolarNorm(n,1:end), Delay, 2);
@@ -841,56 +827,18 @@ Parameters = struct (                 ...
    'MatchRepeats',            10    , ...
    'NoiseLevel',           1e-21    );
 
-% Set the initial velocity set
-Velocities = Parameters.StartTestVelocity:...
-             Parameters.StepTestVelocity:...
-             Parameters.EndTestVelocity;
-NumVelocities = numel(Velocities);
-
-% Set up the time sequence for the signals at each velocity
-InitTime = 0.001;
-EndTime = 0.004;
-Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
-TimeLength = numel(Time);
-SequenceTime = (0:(TimeLength * NumVelocities) - 1) ...
-               / Parameters.SamplingFrequency;
-
 % Create a noisy signal with a range of velocities
-for VelocityIndex = 1:NumVelocities     
-    
-    % Retrieve the selected velocity
-    Velocity = Velocities(VelocityIndex);
-    
-    % Get a data set of the approriate velocity
-    TripolarData = GetTriPolar(Parameters, Velocity, Time);
-    
-    % Insert the data into the input sequence
-    InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
-    InsertEnd = InsertStart + TimeLength - 1;
-    TriPolarSignal(:,InsertStart:InsertEnd) = TripolarData;
-end
+[TriPolarSignal, ~] = signal_generator(Parameters, GetData);
 
-Parameters.NoiseLevel = 0;
 % Create a noiseless signal with a range of velocities
-for VelocityIndex = 1:NumVelocities     
-    
-    % Retrieve the selected velocity
-    Velocity = Velocities(VelocityIndex);
-    
-    % Get a data set of the approriate velocity
-    TripolarData = GetTriPolar(Parameters, Velocity, Time);
-    
-    % Insert the data into the input sequence
-    InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
-    InsertEnd = InsertStart + TimeLength - 1;
-    NoiselessTriPolarSignal(:,InsertStart:InsertEnd) = TripolarData;
-end
+Parameters.NoiseLevel = 0;
+[NoiselessTriPolarSignal, SequenceTime] = signal_generator(Parameters, GetData);
 
 % Get noise record
 Noise = TriPolarSignal - NoiselessTriPolarSignal;
 
 % SNR in each channel
-for i = 1:Parameters.Electrodes-2
+for i = 1:DataLines
     SignalNoiseRatio(i) = snr(NoiselessTriPolarSignal(i,:), Noise(i,:));
 end
 

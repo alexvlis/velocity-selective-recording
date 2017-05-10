@@ -3,6 +3,7 @@ function AnalyseAnn (ANN, MatchedVelocities, Parameters)
 %
 % C.T.Clarke based on the work of Assad al Shueli
 % Edited by L F Tiong 06/05/2016
+% Edited by A Vlissidis 06/05/2016
 %
 % Use a parameter structure like this:
 %
@@ -41,8 +42,20 @@ InitTime = 0.001;
 EndTime = 0.004;
 Time = -InitTime:1/Parameters.SamplingFrequency:EndTime;
 
+% Handle to set action potential type
+if strcmp(Parameters.APType, 'UniPolar')
+    GetData = @GetUniPolar;
+    DataLines = Parameters.Electrodes;
+elseif strcmp(Parameters.APType, 'TriPolar')
+    GetData = @GetTriPolar;
+    DataLines = Parameters.Electrodes - 2;
+elseif strcmp(Parameters.APType, 'BiPolar')
+    GetData = @GetBiPolar;
+    DataLines = Parameters.Electrodes/2;
+end
+
 % Set up an array for the input tripoles so that we can do an overall AGC
-TripolarData = zeros(NumVelocities , Parameters.Electrodes - 2 , numel(Time));
+Data = zeros(NumVelocities , DataLines , numel(Time));
 
 % Run a test at each of the selected velocities
 for VelocityIndex = 1:NumVelocities     
@@ -52,20 +65,20 @@ for VelocityIndex = 1:NumVelocities
     
     % Get a data set of the approriate velocity using default electrode
     % parameters and no noise for a theoretical tmap.
-    TripolarData(VelocityIndex,:,:) = GetTriPolar(Parameters, Velocity, Time);
+    Data(VelocityIndex,:,:) = GetData(Parameters, Velocity, Time);
 end
 
 % Apply the AGC
-TripolarNorm = AgcSim (TripolarData);
+TripolarNorm = AgcSim (Data);
 
 % Plot the test output against the target
-% for AnnIndex=1:NumAnns
-%     figure (AnnIndex+1);
-%     title('ANN test results with input noise');
-%     ylabel('Magnitude of response');
-%     xlabel('Time (s)');
-%     hold all;
-% end    
+for AnnIndex=1:NumAnns
+    figure (AnnIndex+1);
+    title('ANN test results with input noise');
+    ylabel('Magnitude of response');
+    xlabel('Time (s)');
+    hold all;
+end    
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Apply each ANN to an AP at each test velocity and find the peak response
@@ -80,7 +93,6 @@ for VelocityIndex = 1:NumVelocities
 
     % Apply data of the selected velocity to each ANN
     for AnnIndex=1:NumAnns
-
         % Run the ANN
         AnnOutputCellArray = sim(ANN(AnnIndex).net,TripolarCellArray);
          
@@ -92,9 +104,10 @@ for VelocityIndex = 1:NumVelocities
         PeakCustom(VelocityIndex,AnnIndex) = max(abs(AnnOutput));
         
         % Plot the ANN time response to this AP
-        figure (AnnIndex+1);
+        if VelocityIndex == 1
+            figure (AnnIndex+1);
+        end
         plot (Time,AnnOutput,'DisplayName',num2str(Velocities(VelocityIndex)));
-        
     end 
 end
 

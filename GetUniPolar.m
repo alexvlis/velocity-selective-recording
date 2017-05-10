@@ -17,15 +17,15 @@ function UniPolarSignal = GetUniPolar(Parameters, ActionPotentialVelocity, Time)
 % Other parameters may be included but will be ignored
 
 % Establish implied cuff parameters
+
 if (Parameters.Electrodes > 1)
-    ElectrodeDelay = Parameters.ElectrodeSpacing / ActionPotentialVelocity; 
+    ElectrodeDelay = Parameters.ElectrodeSpacing ./ ActionPotentialVelocity; 
 else
     ElectrodeDelay = 0;
 end
 
 % Get the length of sequence to produce
 SequenceLength = max(size(Time));
-
 
 A = [2.2e7,0.47e9,2.6e1,4.08e-3,7.44e-11];
 B = [3.6e3,  1e4, 1.5e4,  1.5e4,    1e4];
@@ -50,8 +50,8 @@ end;
 
 % Standard Unipolar signal (ActionPotentialVelocity^2 * )
 UniPolarSignal = zeros(Parameters.Electrodes,SequenceLength);
-for Count = 1 : Parameters.Electrodes
-    UniPolarSignal(Count,:) = ActionPotentialVelocity^2 * max(0,A(TMAP)*((Time - (Count-1) * ElectrodeDelay).^n(TMAP)).*(exp((-B(TMAP))*(Time - (Count-1) * ElectrodeDelay))));
+for i = 1 : Parameters.Electrodes
+    UniPolarSignal(i,:) = ActionPotentialVelocity^2 * max(0,A(TMAP)*((Time - (i-1) * ElectrodeDelay).^n(TMAP)).*(exp((-B(TMAP))*(Time - (i-1) * ElectrodeDelay))));
 end;
 
 % Work out the approximate RMS value of the signal
