@@ -1,5 +1,4 @@
-# VSR
-Velocity Selective Recording using a TDNN.
+# Velocity Selective Recording using a TDNN.
 
 Velocity Selective Recording (VSR) has been proposed as a technique of extracting more information from implantable neural interfaces. Re- cent research has shown that a Time Delay Neural Network (TDNN) has the potential to outperform traditional VSR techniques, but requires a time consuming optimisation process. This project explores a series of analyses performed in order to understand the operation of this model in VSR, in order to eliminate the need for optimisation and potentially improve its performance for low Signal-to-Noise Ratio (SNR) inputs.
 
