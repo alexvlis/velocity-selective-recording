@@ -4,6 +4,7 @@ function ANN = DesignAnn (AnnSelections, Parameters)
 %
 % C.T.Clarke based on the work of Assad al Shueli
 % Edited by L F Tiong 06/05/2016
+% Edited by A Vlissidis 06/05/2017
 %
 % Use a parameter structure like this:
 %
@@ -25,10 +26,24 @@ function ANN = DesignAnn (AnnSelections, Parameters)
 
 % Get the number of ANNs to train
 NumAnns = numel(AnnSelections);
+% Pre-allocate for speed
+ANN(1:NumAnns) = struct('net', []);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Setup required variables
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Handle to set action potential type
+if strcmp(Parameters.APType, 'UniPolar')
+    GetData = @GetUniPolar;
+    DataLines = Parameters.Electrodes;
+elseif strcmp(Parameters.APType, 'TriPolar')
+    GetData = @GetTriPolar;
+    DataLines = Parameters.Electrodes - 2;
+elseif strcmp(Parameters.APType, 'BiPolar')
+    GetData = @GetBiPolar;
+    DataLines = floor(Parameters.Electrodes/2);
+end
 
 % Set up the time sequence for the signals at each velocity
 InitTime = 0.001;
@@ -53,10 +68,11 @@ for AnnIndex=1:NumAnns
     Velocities = cat(2,Parameters.StartTestVelocity: ...
         Parameters.StepTestVelocity:Parameters.EndTestVelocity, ...
         MatchedVelocity*ones(1,Parameters.MatchRepeats));
+    
     NumVelocities = numel(Velocities);
     
     % Set up the array to hold the input training data
-    TrainingInputSequence = zeros(Parameters.Electrodes - 2, ...
+    TrainingInputSequence = zeros(DataLines, ...
                               NumVelocities * TimeLength);
                           
     % Create an input sequence for the ANN
@@ -66,12 +82,13 @@ for AnnIndex=1:NumAnns
         Velocity = Velocities(VelocityIndex);
 
         % Get a data set of the appropriate velocity
-        TripolarData = GetTriPolar(Parameters, Velocity, Time);
+        Data = GetData(Parameters, Velocity, Time);
 
         % Insert the data into the input sequence
         InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
         InsertEnd = InsertStart + TimeLength - 1;
-        TrainingInputSequence (:,InsertStart:InsertEnd) = TripolarData;
+        
+        TrainingInputSequence (:,InsertStart:InsertEnd) = Data;
     end
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -93,10 +110,10 @@ for AnnIndex=1:NumAnns
         % Get a data set of the appropriate velocity with no noise
         NoiseLessParameters = Parameters;
         NoiseLessParameters.NoiseLevel = 0;
-        TripolarData = GetTriPolar(NoiseLessParameters, MatchedVelocity, Time);
+        Data = GetData(NoiseLessParameters, MatchedVelocity, Time);
 
         % Get the final channel
-        FinalChannel = TripolarData(Parameters.Electrodes - 2,:);
+        FinalChannel = Data(DataLines,:);
 
         % Normalise it 
         FinalChannel = AgcSim(FinalChannel);
@@ -120,9 +137,10 @@ for AnnIndex=1:NumAnns
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     % Create input signals for validation
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    %2e-21;
     valParameters = Parameters;
     valParameters.StepTestVelocity = 5;
-    valParameters.NoiseLevel = 2e-21;
+    valParameters.NoiseLevel = 2e-22;
     valParameters.MatchRepeats = 5;
     
     % Set the validation Velocity set including the repeated matched set at
@@ -133,7 +151,7 @@ for AnnIndex=1:NumAnns
     NumVelocities = numel(Velocities);
     
     % Set up the array to hold the input training data
-    ValidationInputSequence = zeros(valParameters.Electrodes - 2, ...
+    ValidationInputSequence = zeros(DataLines, ...
                               NumVelocities * TimeLength);
                           
     % Create an input sequence for the ANN
@@ -143,12 +161,12 @@ for AnnIndex=1:NumAnns
         Velocity = Velocities(VelocityIndex);
 
         % Get a data set of the appropriate velocity
-        TripolarData = GetTriPolar(valParameters, Velocity, Time);
+        Data = GetData(valParameters, Velocity, Time);
 
         % Insert the data into the input sequence
         InsertStart = 1 + (VelocityIndex - 1) * TimeLength;
         InsertEnd = InsertStart + TimeLength - 1;
-        ValidationInputSequence (:,InsertStart:InsertEnd) = TripolarData;
+        ValidationInputSequence (:,InsertStart:InsertEnd) = Data;
     end
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -169,10 +187,10 @@ for AnnIndex=1:NumAnns
 
         % Get a data set of the appropriate velocity with no noise
         valParameters.NoiseLevel = 0;
-        TripolarData = GetTriPolar(valParameters, MatchedVelocity, Time);
+        Data = GetData(valParameters, MatchedVelocity, Time);
 
         % Get the final channel
-        FinalChannel = TripolarData(valParameters.Electrodes - 2,:);
+        FinalChannel = Data(DataLines,:);
 
         % Normalise it 
         FinalChannel = AgcSim(FinalChannel);
@@ -208,13 +226,12 @@ for AnnIndex=1:NumAnns
     p = con2seq(TripolarNorm);      % Cell array of input vectors
     t = con2seq(TargetSequence);    % Cell array of target vectors
     
+    d = cell(1, numel(Parameters.AnnLength));
     for i = 1:numel(Parameters.AnnLength)
         d{i} = 0:Parameters.AnnLength(i) - 1;    % Delay vector for ith layer
     end
     
-    %net = newdtdnn(p,t,1,d);         % Obsolete function
     net = distdelaynet(d, Parameters.HiddenLayerSize, Parameters.TrainingMethod);
-    
     net.layers{1:end-1}.transferFcn = Parameters.ActivationFcn1;
     net.layers{end}.transferFcn = Parameters.ActivationFcn2;
     
@@ -225,7 +242,7 @@ for AnnIndex=1:NumAnns
     % net.trainParam.max_fail = 6;          % Maximum validation failures
     % net.trainParam.min_grad = 1e-7;       % Minimum performance gradient
     % net.trainParam.mu = 0.001;            % Initial mu
-    % net.trainParam.mu_dec = 0.1;          % mu decrease factor
+    net.trainParam.mu_dec = 0.1;          % mu decrease factor
     % net.trainParam.mu_inc = 10;           % mu increase factor
     % net.trainParam.mu_max = 1e10;         % Maximum mu
     % net.trainParam.show = 25;             % Epochs between displays (NaN for no displays)
@@ -235,16 +252,20 @@ for AnnIndex=1:NumAnns
     % net.trainParam.mem_reduc = 1;         % Reduce memory and speed to calculate the Jacobian jX
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     net.trainParam.max_fail = 5;
-    net.divideFcn = 'divideind'; 
+    net.divideFcn = 'divideind';
     net.divideParam.trainInd = 1:size(TrainingInputSequence,2);
     net.divideParam.valInd = (1:size(ValidationTargetSequence,2)) + ...
                              size(TrainingInputSequence,2);
     
     % These are Assad's training criteria so they have been kept
     net.trainParam.epochs = Parameters.MaxIterations;
-    net.trainParam.goal = Parameters.MinError;
+    net.trainParam.goal = 1e-6;
     %net.divideFcn = 'dividetrain';        % Allocate all data for training
     %net.trainParam.lr = 0.00005;          % trainlm does not have a learning rate?
+    
+%     net.outputConnect = [1 0];
+%     net.biasConnect = [0; 0];
+%     net.layers{1}.transferFcn = 'purelin';
     
     % Do the ANN training
     net = train(net,p,t);
